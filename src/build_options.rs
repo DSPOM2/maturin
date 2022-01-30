@@ -382,11 +382,24 @@ fn has_abi3(cargo_metadata: &Metadata) -> Result<Option<(u8, u8)>> {
         .resolve
         .as_ref()
         .context("Expected cargo to return metadata with resolve")?;
+    let pyo3_ffi_packages = resolve
+        .nodes
+        .iter()
+        .filter(|package| cargo_metadata[&package.id].name == "pyo3-ffi")
+        .collect::<Vec<_>>();
+
     let pyo3_packages = resolve
         .nodes
         .iter()
         .filter(|package| cargo_metadata[&package.id].name == "pyo3")
         .collect::<Vec<_>>();
+    
+    let pyo3_packages = if pyo3_ffi_packages.is_empty(){
+        pyo3_packages
+    }else{
+        pyo3_ffi_packages
+    };
+    
     match pyo3_packages.as_slice() {
         [pyo3_crate] => {
             // Find the minimal abi3 python version. If there is none, abi3 hasn't been selected
@@ -442,7 +455,7 @@ pub fn find_bridge(cargo_metadata: &Metadata, bridge: Option<&str>) -> Result<Br
             println!("🔗 Found bin bindings");
             BridgeModel::Bin
         } else {
-            if !deps.contains_key(bindings) {
+            if !(deps.contains_key(bindings) || bindings == "pyo3" && deps.contains_key("pyo3-ffi")) {
                 bail!(
                     "The bindings crate {} was not found in the dependencies list",
                     bindings
@@ -451,7 +464,7 @@ pub fn find_bridge(cargo_metadata: &Metadata, bridge: Option<&str>) -> Result<Br
 
             BridgeModel::Bindings(bindings.to_string())
         }
-    } else if deps.get("pyo3").is_some() {
+    } else if deps.contains_key("pyo3") || deps.contains_key("pyo3-ffi") {
         BridgeModel::Bindings("pyo3".to_string())
     } else if deps.contains_key("cpython") {
         println!("🔗 Found rust-cpython bindings");
@@ -476,7 +489,11 @@ pub fn find_bridge(cargo_metadata: &Metadata, bridge: Option<&str>) -> Result<Br
     };
 
     if BridgeModel::Bindings("pyo3".to_string()) == bridge {
-        let pyo3_node = deps["pyo3"];
+        let pyo3_node = match deps.get("pyo3-ffi"){
+            Some(dep) => dep,
+            None => deps["pyo3"],
+        };
+        
         if !pyo3_node.features.contains(&"extension-module".to_string()) {
             let version = cargo_metadata[&pyo3_node.id].version.to_string();
             println!(
